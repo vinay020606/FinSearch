@@ -8,10 +8,11 @@ from .vector_store import InMemoryVectorStore
 from .embeddings import (
     BaseEmbeddingModel,
     FallbackHashEmbedding,
+    FinE5Embedding,
+    FinModernBERTEmbedding,
     BGELargeEnEmbedding,
     CohereEmbedV3,
-    E5Mistral7BEmbedding,
-    FinanceDomainAdaptedEmbedding
+    E5Mistral7BEmbedding
 )
 from .rrf_fusion import RRFFusion
 from .hybrid_retriever import HybridRetriever
@@ -24,10 +25,11 @@ __all__ = [
     "InMemoryVectorStore",
     "BaseEmbeddingModel",
     "FallbackHashEmbedding",
+    "FinE5Embedding",
+    "FinModernBERTEmbedding",
     "BGELargeEnEmbedding",
     "CohereEmbedV3",
     "E5Mistral7BEmbedding",
-    "FinanceDomainAdaptedEmbedding",
     "RRFFusion",
     "HybridRetriever"
 ]

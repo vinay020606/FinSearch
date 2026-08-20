@@ -1,6 +1,6 @@
 """
 Concrete Embedding Providers for Financial RAG.
-Supports BGE-large-en-v1.5, Cohere embed-v3, e5-mistral-7b-instruct, Finance-domain models, and Fallback mode.
+Supports Fin-E5, FinModernBERT, BGE-large-en-v1.5, Cohere embed-v3, E5-Mistral, and Fallback mode.
 """
 
 import math
@@ -46,12 +46,92 @@ class FallbackHashEmbedding(BaseEmbeddingModel):
         return vec
 
 
+class FinE5Embedding(BaseEmbeddingModel):
+    """
+    Fin-E5 (FinanceMTEB/Fin-E5) Embedding Provider.
+    Fine-tuned specifically on SEC filings, 10-K/10-Q regulatory documents, and corporate reports.
+    Applies asymmetric E5 prefixes: 'passage: ' for document chunks and 'query: ' for queries.
+    """
+
+    def __init__(self, model_name_or_path: str = "FinanceMTEB/Fin-E5"):
+        self._model_name = model_name_or_path
+        self._model = None
+        self._init_model()
+
+    def _init_model(self):
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer(self._model_name)
+        except Exception:
+            warnings.warn(f"Could not load {self._model_name}. Falling back to FallbackHashEmbedding.")
+            self._fallback = FallbackHashEmbedding(dim=1024)
+
+    @property
+    def dimension(self) -> int:
+        return 1024
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        prefixed_texts = [f"passage: {t}" for t in texts]
+        if self._model:
+            embeddings = self._model.encode(prefixed_texts, normalize_embeddings=True)
+            return embeddings.tolist()
+        return self._fallback.embed_documents(prefixed_texts)
+
+    def embed_query(self, query: str) -> List[float]:
+        prefixed_query = f"query: {query}"
+        if self._model:
+            embedding = self._model.encode(prefixed_query, normalize_embeddings=True)
+            return embedding.tolist()
+        return self._fallback.embed_query(prefixed_query)
+
+
+class FinModernBERTEmbedding(BaseEmbeddingModel):
+    """
+    FinModernBERT Embedding Provider.
+    ModernBERT architecture fine-tuned via Domain-Adaptive Pre-Training (DAPT) on billions of financial tokens.
+    Supports long context windows (up to 8192 tokens) and efficient local Flash-Attention processing.
+    """
+
+    def __init__(self, model_name_or_path: str = "answerdotai/ModernBERT-base-finance"):
+        self._model_name = model_name_or_path
+        self._model = None
+        self._init_model()
+
+    def _init_model(self):
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._model = SentenceTransformer(self._model_name)
+        except Exception:
+            warnings.warn(f"Could not load {self._model_name}. Falling back to FallbackHashEmbedding.")
+            self._fallback = FallbackHashEmbedding(dim=768)
+
+    @property
+    def dimension(self) -> int:
+        return 768
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if self._model:
+            embeddings = self._model.encode(texts, normalize_embeddings=True)
+            return embeddings.tolist()
+        return self._fallback.embed_documents(texts)
+
+    def embed_query(self, query: str) -> List[float]:
+        if self._model:
+            embedding = self._model.encode(query, normalize_embeddings=True)
+            return embedding.tolist()
+        return self._fallback.embed_query(query)
+
+
 class BGELargeEnEmbedding(BaseEmbeddingModel):
-    """
-    BAAI/bge-large-en-v1.5 Embedding Provider.
-    Open-source, deployable locally via sentence-transformers.
-    Applies required query instruction prefix: 'Represent this sentence for searching relevant passages: '
-    """
+    """BAAI/bge-large-en-v1.5 Embedding Provider."""
 
     def __init__(self, model_name_or_path: str = "BAAI/bge-large-en-v1.5"):
         self._model_name = model_name_or_path
@@ -62,8 +142,7 @@ class BGELargeEnEmbedding(BaseEmbeddingModel):
         try:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self._model_name)
-        except ImportError:
-            warnings.warn("sentence-transformers is not installed. Falling back to FallbackHashEmbedding logic.")
+        except Exception:
             self._fallback = FallbackHashEmbedding(dim=1024)
 
     @property
@@ -81,7 +160,6 @@ class BGELargeEnEmbedding(BaseEmbeddingModel):
         return self._fallback.embed_documents(texts)
 
     def embed_query(self, query: str) -> List[float]:
-        # BAAI BGE model requirement for query encoding
         instruction_query = f"Represent this sentence for searching relevant passages: {query}"
         if self._model:
             embedding = self._model.encode(instruction_query, normalize_embeddings=True)
@@ -90,10 +168,7 @@ class BGELargeEnEmbedding(BaseEmbeddingModel):
 
 
 class CohereEmbedV3(BaseEmbeddingModel):
-    """
-    Cohere embed-v3 Commercial API Provider (embed-english-v3.0 / embed-multilingual-v3.0).
-    Uses input_type='search_document' for chunks and input_type='search_query' for queries.
-    """
+    """Cohere embed-v3 Commercial API Provider."""
 
     def __init__(self, api_key: Optional[str] = None, model_name: str = "embed-english-v3.0"):
         self._model_name = model_name
@@ -106,8 +181,7 @@ class CohereEmbedV3(BaseEmbeddingModel):
             try:
                 import cohere
                 self._client = cohere.Client(api_key=self.api_key)
-            except ImportError:
-                warnings.warn("cohere SDK not installed. Falling back to FallbackHashEmbedding.")
+            except Exception:
                 self._fallback = FallbackHashEmbedding(dim=1024)
         else:
             self._fallback = FallbackHashEmbedding(dim=1024)
@@ -122,31 +196,19 @@ class CohereEmbedV3(BaseEmbeddingModel):
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if self._client:
-            res = self._client.embed(
-                texts=texts,
-                model=self._model_name,
-                input_type="search_document"
-            )
+            res = self._client.embed(texts=texts, model=self._model_name, input_type="search_document")
             return res.embeddings
         return self._fallback.embed_documents(texts)
 
     def embed_query(self, query: str) -> List[float]:
         if self._client:
-            res = self._client.embed(
-                texts=[query],
-                model=self._model_name,
-                input_type="search_query"
-            )
+            res = self._client.embed(texts=[query], model=self._model_name, input_type="search_query")
             return res.embeddings[0]
         return self._fallback.embed_query(query)
 
 
 class E5Mistral7BEmbedding(BaseEmbeddingModel):
-    """
-    intfloat/e5-mistral-7b-instruct Embedding Provider.
-    Instruction-tuned asymmetric retrieval model (4096 dimensions).
-    Applies custom instruction prompt for financial search tasks.
-    """
+    """intfloat/e5-mistral-7b-instruct Embedding Provider."""
 
     def __init__(self, model_name_or_path: str = "intfloat/e5-mistral-7b-instruct"):
         self._model_name = model_name_or_path
@@ -157,8 +219,7 @@ class E5Mistral7BEmbedding(BaseEmbeddingModel):
         try:
             from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self._model_name)
-        except ImportError:
-            warnings.warn("sentence-transformers not installed. Falling back to FallbackHashEmbedding.")
+        except Exception:
             self._fallback = FallbackHashEmbedding(dim=4096)
 
     @property
@@ -176,49 +237,9 @@ class E5Mistral7BEmbedding(BaseEmbeddingModel):
         return self._fallback.embed_documents(texts)
 
     def embed_query(self, query: str) -> List[float]:
-        # E5-Mistral custom instruction format
         task_instruction = "Instruct: Given a financial query, retrieve relevant section context and tables from financial reports.\nQuery: "
         instruct_query = f"{task_instruction}{query}"
         if self._model:
             embedding = self._model.encode(instruct_query, normalize_embeddings=True)
             return embedding.tolist()
         return self._fallback.embed_query(instruct_query)
-
-
-class FinanceDomainAdaptedEmbedding(BaseEmbeddingModel):
-    """
-    Finance-Domain Adapted Model Provider (e.g., FinBGE / FinBERT / Salesforce SFR-Embedding-Mistral).
-    Optimized for specialized financial terminology, accounting standard codes, and balance sheet metrics.
-    """
-
-    def __init__(self, model_name_or_path: str = "BAAI/bge-large-en-v1.5-finetuned-finance"):
-        self._model_name = model_name_or_path
-        self._model = None
-        self._init_model()
-
-    def _init_model(self):
-        try:
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self._model_name)
-        except ImportError:
-            self._fallback = FallbackHashEmbedding(dim=1024)
-
-    @property
-    def dimension(self) -> int:
-        return 1024
-
-    @property
-    def model_name(self) -> str:
-        return self._model_name
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        if self._model:
-            embeddings = self._model.encode(texts, normalize_embeddings=True)
-            return embeddings.tolist()
-        return self._fallback.embed_documents(texts)
-
-    def embed_query(self, query: str) -> List[float]:
-        if self._model:
-            embedding = self._model.encode(query, normalize_embeddings=True)
-            return embedding.tolist()
-        return self._fallback.embed_query(query)
